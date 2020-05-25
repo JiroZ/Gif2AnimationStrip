@@ -1,3 +1,8 @@
+import com.drew.imaging.ImageMetadataReader;
+import com.drew.imaging.ImageProcessingException;
+import com.drew.metadata.Metadata;
+import com.drew.metadata.MetadataException;
+import com.drew.metadata.gif.GifControlDirectory;
 import org.w3c.dom.NamedNodeMap;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
@@ -10,6 +15,7 @@ import javax.imageio.stream.ImageInputStream;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.awt.image.ColorModel;
+import java.awt.image.ImageObserver;
 import java.awt.image.WritableRaster;
 import java.io.*;
 import java.util.*;
@@ -17,29 +23,64 @@ import java.util.List;
 
 public class launch {
     static BufferedImage underlay;
-    static HashMap<String, Integer> pokemonFrames = new HashMap<>();
+    static HashMap<String, HashMap<Integer, Integer>> pokemonFrames = new HashMap<String, HashMap<Integer, Integer>>();
+    static int frameTime;
 
     public static void main(String[] args) throws IOException {
         File directoryGIF = new File("assets/pokemons");
         File[] pokemonGIFS = directoryGIF.listFiles();
+
         if (pokemonGIFS != null) {
             for (File pokemonGIF : pokemonGIFS) {
                 if (pokemonGIF.getName().endsWith(".gif")) {
                     createSprite(pokemonGIF);
                 }
+                System.out.println(pokemonGIF.getName()+ " FrameTime:" +frameTime);
             }
         }
         System.out.println(getPokemonFrames());
 
         Writer writer = new FileWriter("assets/output/frames.csv");
-        for (Map.Entry<String, Integer> entry : getPokemonFrames().entrySet()) {
+        for (Map.Entry<String, HashMap<Integer, Integer>> entry : getPokemonFrames().entrySet()) {
+            for(Map.Entry<Integer,Integer> dataEntry : entry.getValue().entrySet())
             writer.append(entry.getKey())
                     .append(',')
-                    .append(String.valueOf(entry.getValue()))
+                    .append(String.valueOf(dataEntry.getKey()))
+                    .append(',')
+                    .append(String.valueOf(dataEntry.getValue()))
                     .append("\r\n");
         }
         writer.flush();
         writer.close();
+    }
+
+    private static int getGifAnimatedTimeLength(InputStream imagePath) {
+        int timeLength = 0;
+        try {
+            Metadata metadata = ImageMetadataReader.readMetadata(imagePath);
+            List<GifControlDirectory> gifControlDirectories =
+                    (List<GifControlDirectory>) metadata.getDirectoriesOfType(GifControlDirectory.class);
+            if (gifControlDirectories.size() == 1) { // Do not read delay of static GIF files with single frame.
+            } else if (gifControlDirectories.size() >= 1) {
+                for (GifControlDirectory gifControlDirectory : gifControlDirectories) {
+                    try {
+                        if (gifControlDirectory.hasTagName(GifControlDirectory.TAG_DELAY)) {
+                            timeLength += gifControlDirectory.getInt(GifControlDirectory.TAG_DELAY);
+                        }
+                    } catch (MetadataException e) {
+                        e.printStackTrace();
+                    }
+                }
+                // Unit of time is 10 milliseconds in GIF.
+                timeLength *= 10;
+            }
+            return timeLength;
+        } catch (IOException e) {
+            e.printStackTrace();
+        } catch (ImageProcessingException e) {
+            e.printStackTrace();
+        }
+        return timeLength;
     }
 
     private static void createSprite(File pokemonGIF) throws IOException {
@@ -58,13 +99,18 @@ public class launch {
             gifArray[count] = frame.getImage();
             count++;
         }
-        pokemonFrames.put(pokemonGIF.getName().replace(".gif", ""), count + 1);
+        InputStream gifStream = new FileInputStream(pokemonGIF);
+        frameTime = getGifAnimatedTimeLength(gifStream);
+        HashMap<Integer,Integer> gifData = new HashMap();
+        gifData.put(count,frameTime);
+
+        pokemonFrames.put(pokemonGIF.getName().replace(".gif", ""), gifData);
         List<BufferedImage> gifList = Arrays.asList(gifArray);
         BufferedImage finalImage = joinBufferedImage(gifList);
         ImageIO.write(finalImage, "PNG", new File("assets/output/" + gifFile.getName().replace(".gif", "") + ".png"));
     }
 
-    public static HashMap<String, Integer> getPokemonFrames() {
+    public static HashMap<String, HashMap<Integer, Integer>> getPokemonFrames() {
         return pokemonFrames;
     }
 
@@ -192,7 +238,9 @@ public class launch {
                     }
                 }
 
-                master = new BufferedImage(from.getColorModel(), from.copyData(null), from.isAlphaPremultiplied(), null);
+                if (from != null) {
+                    master = new BufferedImage(from.getColorModel(), from.copyData(null), from.isAlphaPremultiplied(), null);
+                }
                 masterGraphics = master.createGraphics();
                 masterGraphics.setBackground(new Color(0, 0, 0, 0));
             } else if (disposal.equals("restoreToBackgroundColor")) {
